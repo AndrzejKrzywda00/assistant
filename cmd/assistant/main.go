@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/assistant/internal/store"
-	"github.com/local/assistant/internal/tui"
+	"github.com/AndrzejKrzywda00/assistant/internal/store"
+	"github.com/AndrzejKrzywda00/assistant/internal/tui"
 )
 
 const usage = `assistant - a keyboard-first local task tracker
@@ -29,8 +29,17 @@ Usage:
   assistant delete <id>             Delete a task
   assistant path                    Print the local data file path
   assistant context                 Print a Claude-friendly task summary
+  assistant version                 Print version and build information
 
 Set ASSISTANT_DATA_PATH to use a specific data file.`
+
+// Release builds override these using -ldflags. Development builds retain
+// readable defaults rather than pretending to be a published version.
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -54,6 +63,9 @@ func run(args []string) error {
 		return nil
 	case "path":
 		fmt.Println(s.Path())
+		return nil
+	case "version", "--version", "-v":
+		fmt.Printf("assistant %s (commit %s, built %s)\n", version, commit, date)
 		return nil
 	case "add":
 		return addCommand(s, args[1:])

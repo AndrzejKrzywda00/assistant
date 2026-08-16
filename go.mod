@@ -1,3 +1,3 @@
-module github.com/local/assistant
+module github.com/AndrzejKrzywda00/assistant
 
 go 1.23

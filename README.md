@@ -1,5 +1,7 @@
 # Assistant
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A local, keyboard-first productivity app for the terminal. It stores tasks in a
 human-readable JSON file and exposes both an interactive interface and a
 scriptable CLI, so people and coding agents can safely work with the same list.
@@ -20,6 +22,15 @@ Go 1.23 or newer is required. From this checkout, install it with:
 ```sh
 go install ./cmd/assistant
 ```
+
+Or install the latest published version directly from GitHub:
+
+```sh
+go install github.com/AndrzejKrzywda00/assistant/cmd/assistant@latest
+```
+
+Tagged versions are also available as prebuilt macOS and Linux archives on the
+[GitHub Releases](https://github.com/AndrzejKrzywda00/assistant/releases) page.
 
 Ensure `$(go env GOPATH)/bin` is on `PATH`, then run `assistant`.
 
@@ -91,4 +102,20 @@ assistant reopen <id>             Reopen a task
 assistant delete <id>             Delete a task
 assistant path                    Print the local data file path
 assistant context                 Print a Claude-friendly task summary
+assistant version                 Print version and build information
+```
+
+## License
+
+Assistant is available under the [MIT License](LICENSE).
+
+## Releasing
+
+Pushing a semantic version tag runs the release workflow, which tests the code,
+builds macOS and Linux archives, generates SHA-256 checksums, and publishes a
+GitHub Release:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
 ```

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/assistant/internal/auth"
-	"github.com/local/assistant/internal/store"
+	"github.com/AndrzejKrzywda00/assistant/internal/auth"
+	"github.com/AndrzejKrzywda00/assistant/internal/store"
 )
 
 var errQuit = fmt.Errorf("quit")

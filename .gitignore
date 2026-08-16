@@ -1,0 +1,16 @@
+# Compiled binaries
+/assistant
+/dist/
+*.exe
+*.test
+*.out
+
+# Local task data when ASSISTANT_DATA_PATH points into the repository
+/.assistant/
+
+# macOS and editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
