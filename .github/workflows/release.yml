@@ -79,3 +79,30 @@ jobs:
             --verify-tag \
             --generate-notes \
             --title "Assistant ${GITHUB_REF_NAME}"
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured" >&2
+            exit 1
+          fi
+
+          gh auth setup-git
+          gh repo clone AndrzejKrzywda00/homebrew-tap /tmp/homebrew-tap
+
+          bash ./scripts/generate-homebrew-formula.sh \
+            "${VERSION}" dist/checksums.txt \
+            /tmp/homebrew-tap/Formula/assistant.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/assistant.rb
+          git commit -m "assistant ${VERSION}"
+          git push

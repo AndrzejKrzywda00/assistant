@@ -17,6 +17,14 @@ or press Enter to keep the currently selected project when one exists.
 
 ## Install on macOS
 
+Install the prebuilt release with Homebrew:
+
+```sh
+brew install AndrzejKrzywda00/tap/assistant
+```
+
+Upgrade later releases with `brew upgrade assistant`.
+
 Go 1.23 or newer is required. From this checkout, install it with:
 
 ```sh
@@ -119,3 +127,15 @@ GitHub Release:
 git tag v0.1.0
 git push origin v0.1.0
 ```
+
+### One-time Homebrew setup
+
+1. Create a public repository named `AndrzejKrzywda00/homebrew-tap` with a
+   `Formula` directory.
+2. Create a fine-grained personal access token with access only to that
+   repository and `Contents: Read and write` permission.
+3. In this repository, add the token under **Settings → Secrets and variables →
+   Actions** as `HOMEBREW_TAP_TOKEN`.
+
+Each subsequent release generates `Formula/assistant.rb` from the release
+checksums and commits it to the tap automatically.
