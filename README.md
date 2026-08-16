@@ -11,9 +11,9 @@ enter your name, then create and confirm a new PIN; later launches greet you by
 name and require the PIN before showing the
 outline dashboard. The salted PIN verifier is stored beside the task data file.
 
-There is no built-in project. Creating a task asks for its project first. Enter
-an existing project name to use it, enter a new name to create it automatically,
-or press Enter to keep the currently selected project when one exists.
+There is no built-in project. The first task asks you to create its project.
+Afterward, `a` creates tasks directly inside the currently selected project;
+use `p` when you want to create another project.
 
 ## Install on macOS
 
@@ -48,8 +48,8 @@ Ensure `$(go env GOPATH)/bin` is on `PATH`, then run `assistant`.
 | --- | --- |
 | `a` | Add a task |
 | `p` | Create a project |
-| `h` / left arrow | Focus the Views and Projects sidebar |
-| `l` / right arrow, `enter` | Return to the selected view's tasks |
+| `h` / left arrow | Focus the Spaces and Projects sidebar |
+| `l` / right arrow, `enter` | Return to the selected space's tasks |
 | `j` / `k`, arrows | Select Today, Blocked, Waiting, a project, or a task |
 | `m` | Move a task through Today, Blocked, and Waiting |
 | `space` | Complete or reopen the selected task; it stays visible |
