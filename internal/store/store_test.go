@@ -120,6 +120,44 @@ func TestProjectsOwnTasks(t *testing.T) {
 	}
 }
 
+func TestDeleteProjectAlsoDeletesItsTasks(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "tasks.json"))
+	deleted, err := s.AddProject("Delete me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := s.AddProject("Keep me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddToProject("Deleted task", deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddToProject("Kept task", kept.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProject(deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := s.Projects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 || projects[0].ID != kept.ID {
+		t.Fatalf("projects after deletion: %#v", projects)
+	}
+	tasks, err := s.List(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ProjectID != kept.ID {
+		t.Fatalf("tasks after deletion: %#v", tasks)
+	}
+	if err := s.DeleteProject(deleted.ID); err == nil {
+		t.Fatal("deleting a missing project succeeded")
+	}
+}
+
 func TestWorkTimer(t *testing.T) {
 	s := New(filepath.Join(t.TempDir(), "tasks.json"))
 	project, err := s.AddProject("Work")

@@ -46,21 +46,26 @@ Ensure `$(go env GOPATH)/bin` is on `PATH`, then run `assistant`.
 
 | Key | Action |
 | --- | --- |
-| `a` | Add a task |
-| `p` | Create a project |
+| `a` | Add a task, or add a project while browsing the sidebar |
+| `p` | Create a project from anywhere |
 | `h` / left arrow | Focus the Spaces and Projects sidebar |
 | `l` / right arrow, `enter` | Return to the selected space's tasks |
-| `j` / `k`, arrows | Select Today, Blocked, Waiting, a project, or a task |
-| `m` | Move a task through Today, Blocked, and Waiting |
+| Up/down arrows | Select Today, Blocked, Waiting, a project, or a task |
+| `b` | Move the selected task to Blocked |
 | `space` | Complete or reopen the selected task; it stays visible |
 | `enter` | Edit the selected task |
-| `f` | Replace the task pane with the selected task's Focus tab |
+| `f` | In a Space, replace the task pane with the selected task's Focus tab |
 | `p` in Focus | Set explicit task progress from 0–100% |
 | `escape` in Focus | Return to Outline |
 
 Task progress is represented by the circular marker itself: `○` begins empty,
 intermediate circles fill as work advances, and `●` is fully complete.
-| `d` | Delete the selected task (with confirmation) |
+
+Today, Blocked, and Waiting show one active project at a time. Select a project
+in the sidebar and press Enter to make it active across all three Spaces. The
+active project is underlined, and the Space counts include only its tasks.
+
+| `d` | Delete the selected task or project (with confirmation) |
 | `t` | Toggle open/all tasks |
 | `g` / `G` | Jump to first / last task |
 | `?` | Show help |

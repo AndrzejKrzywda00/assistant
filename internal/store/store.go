@@ -313,6 +313,36 @@ func (s *Store) Delete(id int) error {
 	})
 }
 
+// DeleteProject removes a project and every task owned by it in one locked
+// update, so tasks can never be left pointing at a project that no longer exists.
+func (s *Store) DeleteProject(id int) error {
+	return s.withLock(func() error {
+		d, err := s.load()
+		if err != nil {
+			return err
+		}
+		projectIndex := -1
+		for i := range d.Projects {
+			if d.Projects[i].ID == id {
+				projectIndex = i
+				break
+			}
+		}
+		if projectIndex < 0 {
+			return fmt.Errorf("project #%d not found", id)
+		}
+		d.Projects = append(d.Projects[:projectIndex], d.Projects[projectIndex+1:]...)
+		tasks := d.Tasks[:0]
+		for _, task := range d.Tasks {
+			if task.ProjectID != id {
+				tasks = append(tasks, task)
+			}
+		}
+		d.Tasks = tasks
+		return s.save(d)
+	})
+}
+
 // withLock serializes updates made by the TUI, scripts, and parallel coding agents.
 func (s *Store) withLock(fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {

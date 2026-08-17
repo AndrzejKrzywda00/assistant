@@ -344,7 +344,7 @@ func (a *app) loop() error {
 			if a.focusTaskID != 0 {
 				a.stopFocus()
 			}
-		case "j", "down":
+		case "down":
 			if a.focusTaskID != 0 {
 				break
 			}
@@ -353,7 +353,7 @@ func (a *app) loop() error {
 			} else {
 				a.move(1)
 			}
-		case "k", "up":
+		case "up":
 			if a.focusTaskID != 0 {
 				break
 			}
@@ -378,6 +378,12 @@ func (a *app) loop() error {
 			}
 		case "a":
 			if a.focusTaskID != 0 {
+				break
+			}
+			if a.projectFocus {
+				if err := a.promptNewProject(); err != nil {
+					return err
+				}
 				break
 			}
 			project := a.activeProject()
@@ -411,23 +417,8 @@ func (a *app) loop() error {
 				}
 				break
 			}
-			name, cancelled, err := a.prompt("New project: ")
-			if err != nil {
+			if err := a.promptNewProject(); err != nil {
 				return err
-			}
-			if !cancelled && strings.TrimSpace(name) != "" {
-				project, err := a.store.AddProject(name)
-				a.setResult(err, "Project created")
-				if err == nil {
-					if err := a.refresh(); err != nil {
-						return err
-					}
-					for i := range a.projects {
-						if a.projects[i].ID == project.ID {
-							a.project = i
-						}
-					}
-				}
 			}
 		case " ":
 			if a.focusTaskID != 0 {
@@ -451,8 +442,7 @@ func (a *app) loop() error {
 				break
 			}
 			if a.projectFocus {
-				a.applySidebarSelection()
-				a.projectFocus = false
+				a.activateSidebarSelection()
 				break
 			}
 			if t, ok := a.selected(); ok {
@@ -469,11 +459,17 @@ func (a *app) loop() error {
 				break
 			}
 			if a.projectFocus {
-				a.status = "Project deletion is not available yet"
+				if a.sidebar < 3 || a.sidebar-3 >= len(a.projects) {
+					a.status = "Select a project to delete"
+					break
+				}
+				if err := a.confirmDeleteProject(a.sidebar - 3); err != nil {
+					return err
+				}
 				break
 			}
 			if t, ok := a.selected(); ok {
-				yes, _, err := a.prompt(fmt.Sprintf("Delete #%d? Type y: ", t.ID))
+				yes, _, err := a.prompt(deletePrompt(fmt.Sprintf("Delete task #%d? Type y: ", t.ID)))
 				if err != nil {
 					return err
 				}
@@ -485,14 +481,14 @@ func (a *app) loop() error {
 			if a.focusTaskID == 0 && !a.projectFocus {
 				a.setTaskState("today")
 			}
-		case "m":
+		case "b":
 			if a.focusTaskID == 0 && !a.projectFocus {
-				a.cycleTaskState()
+				a.setTaskState("blocked")
 			}
 		case "?":
-			a.status = "h/← projects · l/→ tasks · j/k select · enter edit · space done · q quit"
+			a.status = "h/← projects · l/→ tasks · ↑/↓ select · b blocked · d delete · q quit"
 		}
-		if key == "f" && a.focusTaskID == 0 && !a.projectFocus {
+		if key == "f" && a.focusTaskID == 0 && !a.projectFocus && a.focusAvailable() {
 			if task, ok := a.selected(); ok {
 				a.focusTaskID = task.ID
 			}
@@ -500,11 +496,70 @@ func (a *app) loop() error {
 	}
 }
 
+func (a *app) promptNewProject() error {
+	name, cancelled, err := a.prompt("New project: ")
+	if err != nil || cancelled || strings.TrimSpace(name) == "" {
+		return err
+	}
+	project, err := a.store.AddProject(name)
+	a.setResult(err, "Project created")
+	if err != nil {
+		return nil
+	}
+	if err := a.refresh(); err != nil {
+		return err
+	}
+	for i := range a.projects {
+		if a.projects[i].ID == project.ID {
+			a.project = i
+			a.sidebar = i + 3
+			break
+		}
+	}
+	return nil
+}
+
+func (a *app) confirmDeleteProject(index int) error {
+	project := a.projects[index]
+	yes, cancelled, err := a.prompt(deleteProjectPrompt(project.Name))
+	if err != nil || cancelled || !strings.EqualFold(strings.TrimSpace(yes), "y") {
+		return err
+	}
+	if err := a.store.DeleteProject(project.ID); err != nil {
+		a.setResult(err, "")
+		return nil
+	}
+	if err := a.refresh(); err != nil {
+		return err
+	}
+	if len(a.projects) == 0 {
+		a.project = 0
+		a.sidebar = 0
+	} else {
+		a.project = minInt(index, len(a.projects)-1)
+		a.sidebar = a.project + 3
+	}
+	a.status = "Project deleted"
+	return nil
+}
+
+func deletePrompt(message string) string {
+	return "\x1b[31m" + message + resetBG
+}
+
+func deleteProjectPrompt(name string) string {
+	return "\x1b[31mDelete project \x1b[97m\"" + sanitize(name) + "\"\x1b[31m and all its tasks? Type y: " + resetBG
+}
+
 func (a *app) stopFocus() {
 	if a.focusTaskID == 0 {
 		return
 	}
 	a.focusTaskID = 0
+}
+
+func (a *app) focusAvailable() bool {
+	return !a.projectFocus && a.sidebar >= 0 && a.sidebar < 3
 }
 
 func (a *app) promptProgress() error {
@@ -563,7 +618,7 @@ func (a *app) refresh() error {
 		a.spaceCounts[i] = 0
 	}
 	for _, task := range tasks {
-		if task.Done {
+		if task.Done || task.ProjectID != projectID {
 			continue
 		}
 		for i, state := range states {
@@ -593,7 +648,11 @@ func (a *app) moveSidebar(delta int) {
 		return
 	}
 	a.sidebar = (a.sidebar + delta + total) % total
-	a.applySidebarSelection()
+	// Spaces change immediately, but browsing project names only moves the
+	// cursor. A project becomes active explicitly with Enter.
+	if a.sidebar < 3 {
+		a.applySidebarSelection()
+	}
 }
 
 func (a *app) applySidebarSelection() {
@@ -605,16 +664,13 @@ func (a *app) applySidebarSelection() {
 	a.current = 0
 }
 
-func (a *app) cycleTaskState() {
-	task, ok := a.selected()
-	if !ok {
-		return
+func (a *app) activateSidebarSelection() {
+	a.applySidebarSelection()
+	// Selecting a project keeps the cursor in the Projects list so another
+	// project can immediately be chosen with the arrow keys. Spaces open tasks.
+	if a.sidebar < 3 {
+		a.projectFocus = false
 	}
-	next := map[string]string{"today": "blocked", "blocked": "waiting", "waiting": "today"}[task.State]
-	if next == "" {
-		next = "today"
-	}
-	a.setResult(a.store.SetState(task.ID, next), "Moved task to "+next)
 }
 
 func (a *app) setTaskState(state string) {
@@ -701,11 +757,10 @@ func (a *app) draw() {
 	bodyHeight := rows - 9
 	showTwoPanes := cols >= 65
 	sidebarOnly := cols < 65 && a.projectFocus
-	if a.focusTaskID == 0 {
-		fmt.Fprint(a.out, "\x1b[48;5;252m\x1b[30m A · OUTLINE "+resetBG+"  \x1b[48;5;238m F · FOCUS "+resetBG+"\r\n")
-	} else {
-		fmt.Fprint(a.out, "\x1b[48;5;238m A · OUTLINE "+resetBG+"  \x1b[48;5;252m\x1b[30m F · FOCUS "+resetBG+"\r\n")
-	}
+	// Overwrite the complete row. The top bar can become shorter when Focus is
+	// hidden; padding prevents cells from the previous frame remaining visible
+	// without clearing the screen and causing a flash.
+	fmt.Fprint(a.out, padVisible(a.topBar(), cols)+"\r\n")
 
 	if showTwoPanes {
 		sideWidth := clampInt(cols/4, 16, 28)
@@ -713,6 +768,8 @@ func (a *app) draw() {
 		fmt.Fprintf(a.out, "┌%s┬%s┐\r\n", strings.Repeat("─", sideWidth+2), strings.Repeat("─", mainWidth+2))
 		leftHeader := "\x1b[38;5;48m" + fitCell("assistant", sideWidth) + resetBG
 		rightHeader := padBetween("Project: "+project.Name, now.Format("02 Jan · 15:04:05"), mainWidth)
+		leftHeader = boldPaneHeader(leftHeader, a.projectFocus)
+		rightHeader = boldPaneHeader(rightHeader, !a.projectFocus)
 		fmt.Fprintf(a.out, "│ %s │ %s │\r\n", leftHeader, rightHeader)
 		fmt.Fprintf(a.out, "├%s┼%s┤\r\n", strings.Repeat("─", sideWidth+2), strings.Repeat("─", mainWidth+2))
 		sideRows := a.sidebarPaneRows(bodyHeight, sideWidth)
@@ -727,7 +784,8 @@ func (a *app) draw() {
 		if sidebarOnly {
 			headerLeft = "assistant · navigation"
 		}
-		fmt.Fprintf(a.out, "│ %s │\r\n", padBetween(headerLeft, now.Format("15:04:05"), innerWidth))
+		header := padBetween(headerLeft, now.Format("15:04:05"), innerWidth)
+		fmt.Fprintf(a.out, "│ %s │\r\n", boldPaneHeader(header, true))
 		fmt.Fprintf(a.out, "├%s┤\r\n", strings.Repeat("─", cols-2))
 		var pane []string
 		if sidebarOnly {
@@ -750,6 +808,13 @@ func (a *app) draw() {
 		fmt.Fprint(a.out, "\x1b[K\r\n")
 	}
 	fmt.Fprint(a.out, "\x1b[J")
+}
+
+func boldPaneHeader(value string, active bool) string {
+	if !active {
+		return value
+	}
+	return "\x1b[1m" + value + "\x1b[22m"
 }
 
 type paneRow struct {
@@ -776,37 +841,50 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 	result[0] = padBetween(a.activeProject().Name, fmt.Sprintf("%d open", open), width)
 	doneCount := len(a.tasks) - open
 	// Keep the project heading visually separate from the task status sections.
-	items := []paneRow{
-		{taskIndex: -1},
-		{text: fmt.Sprintf("· PENDING (%d) ·", open), taskIndex: -1, pendingHeader: true},
-	}
+	items := []paneRow{{taskIndex: -1}}
 	selectedItem := 0
-	for i, task := range a.tasks {
-		if task.Done {
-			continue
+	if a.space != 0 {
+		spaceName := []string{"TODAY", "BLOCKED", "WAITING"}[a.space]
+		items = append(items, paneRow{text: fmt.Sprintf("· %s (%d) ·", spaceName, len(a.tasks)), taskIndex: -1, pendingHeader: true})
+		for i, task := range a.tasks {
+			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: task.Done, selected: i == a.current}
+			if item.selected {
+				selectedItem = len(items)
+			}
+			items = append(items, item)
 		}
-		item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: task.Done, selected: i == a.current}
-		if item.selected {
-			selectedItem = len(items)
+		if len(a.tasks) == 0 {
+			items = append(items, paneRow{text: "No " + strings.ToLower(spaceName) + " tasks", taskIndex: -1, emptyPrompt: true})
 		}
-		items = append(items, item)
-	}
-	if open == 0 {
-		items = append(items, paneRow{text: "No pending tasks · press a to add one", taskIndex: -1, emptyPrompt: true})
-	}
-	items = append(items, paneRow{taskIndex: -1}, paneRow{text: fmt.Sprintf("· DONE (%d) ·", doneCount), taskIndex: -1, doneHeader: true})
-	for i, task := range a.tasks {
-		if !task.Done {
-			continue
+	} else {
+		items = append(items, paneRow{text: fmt.Sprintf("· PENDING (%d) ·", open), taskIndex: -1, pendingHeader: true})
+		for i, task := range a.tasks {
+			if task.Done {
+				continue
+			}
+			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: task.Done, selected: i == a.current}
+			if item.selected {
+				selectedItem = len(items)
+			}
+			items = append(items, item)
 		}
-		item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: true, selected: i == a.current}
-		if item.selected {
-			selectedItem = len(items)
+		if open == 0 {
+			items = append(items, paneRow{text: "No pending tasks · press a to add one", taskIndex: -1, emptyPrompt: true})
 		}
-		items = append(items, item)
-	}
-	if doneCount == 0 {
-		items = append(items, paneRow{text: "No completed tasks yet", taskIndex: -1, emptyPrompt: true})
+		items = append(items, paneRow{taskIndex: -1}, paneRow{text: fmt.Sprintf("· DONE (%d) ·", doneCount), taskIndex: -1, doneHeader: true})
+		for i, task := range a.tasks {
+			if !task.Done {
+				continue
+			}
+			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: true, selected: i == a.current}
+			if item.selected {
+				selectedItem = len(items)
+			}
+			items = append(items, item)
+		}
+		if doneCount == 0 {
+			items = append(items, paneRow{text: "No completed tasks yet", taskIndex: -1, emptyPrompt: true})
+		}
 	}
 	visible := maxInt(0, height-1)
 	if selectedItem < a.taskScroll {
@@ -888,11 +966,17 @@ func (a *app) sidebarPaneRows(height, width int) []string {
 	}
 	items = append(items, sideItem{"", -1}, sideItem{"PROJECTS", -1}, sideItem{"", -1})
 	for i, project := range a.projects {
-		prefix := "  "
-		if a.sidebar == i+3 {
-			prefix = "▸ "
+		cursor := i + 3
+		nameWidth := maxInt(1, width-4)
+		lines := wrapText(project.Name, nameWidth)
+		for lineIndex, line := range lines {
+			prefix := "  "
+			if a.projectFocus && a.sidebar == cursor && lineIndex == 0 {
+				prefix = "▸ "
+			}
+			text := prefix + line
+			items = append(items, sideItem{text, cursor})
 		}
-		items = append(items, sideItem{prefix + project.Name, i + 3})
 	}
 	selectedRow := 0
 	for i, item := range items {
@@ -919,12 +1003,63 @@ func (a *app) sidebarPaneRows(height, width int) []string {
 		}
 		item := items[index]
 		cell := fitCell(item.text, width)
+		if item.cursor >= 3 && item.cursor == a.project+3 {
+			cell = underlineProjectCell(item.text, width)
+		}
 		if a.projectFocus && item.cursor == a.sidebar {
 			cell = "\x1b[48;5;22m" + cell + resetBG
 		}
 		result[row] = cell
 	}
 	return result
+}
+
+func underlineProjectCell(value string, width int) string {
+	runes := []rune(sanitize(value))
+	if len(runes) > width {
+		runes = append(runes[:maxInt(0, width-1)], '…')
+	}
+	prefixWidth := minInt(2, len(runes))
+	prefix := string(runes[:prefixWidth])
+	name := string(runes[prefixWidth:])
+	return prefix + "\x1b[4m" + name + "\x1b[24m" + strings.Repeat(" ", maxInt(0, width-len(runes)))
+}
+
+func wrapText(value string, width int) []string {
+	value = strings.TrimSpace(sanitize(value))
+	if value == "" {
+		return []string{""}
+	}
+	width = maxInt(1, width)
+	words := strings.Fields(value)
+	lines := make([]string, 0, len(words))
+	current := ""
+	flush := func() {
+		if current != "" {
+			lines = append(lines, current)
+			current = ""
+		}
+	}
+	for _, word := range words {
+		for len([]rune(word)) > width {
+			flush()
+			runes := []rune(word)
+			lines = append(lines, string(runes[:width]))
+			word = string(runes[width:])
+		}
+		if current == "" {
+			current = word
+			continue
+		}
+		if len([]rune(current))+1+len([]rune(word)) <= width {
+			current += " " + word
+			continue
+		}
+		flush()
+		current = word
+	}
+	flush()
+	return lines
 }
 
 func (a *app) responsiveFocusRows(height, width int, now time.Time) []string {
@@ -975,13 +1110,26 @@ func responsiveFocusBar(width, progress int) string {
 }
 
 func (a *app) footerForWidth(width int) string {
+	if !a.focusAvailable() {
+		return "\x1b[33mh/←" + resetBG + " sidebar  \x1b[33ml/→" + resetBG + " tasks  \x1b[33m↑/↓" + resetBG + " select  \x1b[31md" + resetBG + " delete  \x1b[33mq" + resetBG + " quit"
+	}
 	if a.focusTaskID != 0 {
 		return "\x1b[33mp" + resetBG + " progress  \x1b[33mesc" + resetBG + " outline  \x1b[33mq" + resetBG + " quit"
 	}
 	if width < 80 {
-		return "\x1b[33mh/l" + resetBG + " panes  \x1b[33mj/k" + resetBG + " select  \x1b[33m?" + resetBG + " help  \x1b[33mq" + resetBG + " quit"
+		return "\x1b[33mh/l" + resetBG + " panes  \x1b[33m↑/↓" + resetBG + " select  \x1b[33m?" + resetBG + " help  \x1b[33mq" + resetBG + " quit"
 	}
-	return "\x1b[33mh/←" + resetBG + " sidebar  \x1b[33ml/→" + resetBG + " tasks  \x1b[33mj/k" + resetBG + " select  \x1b[33mm" + resetBG + " move  \x1b[33mf" + resetBG + " focus  \x1b[33mq" + resetBG + " quit"
+	return "\x1b[33mh/←" + resetBG + " sidebar  \x1b[33ml/→" + resetBG + " tasks  \x1b[33m↑/↓" + resetBG + " select  \x1b[33mb" + resetBG + " blocked  \x1b[31md" + resetBG + " delete  \x1b[33mf" + resetBG + " focus  \x1b[33mq" + resetBG + " quit"
+}
+
+func (a *app) topBar() string {
+	if !a.focusAvailable() {
+		return "\x1b[48;5;252m\x1b[30m A · OUTLINE " + resetBG
+	}
+	if a.focusTaskID == 0 {
+		return "\x1b[48;5;252m\x1b[30m A · OUTLINE " + resetBG + "  \x1b[48;5;238m F · FOCUS " + resetBG
+	}
+	return "\x1b[48;5;238m A · OUTLINE " + resetBG + "  \x1b[48;5;252m\x1b[30m F · FOCUS " + resetBG
 }
 
 func fitCell(value string, width int) string {
