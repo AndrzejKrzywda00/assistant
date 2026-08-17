@@ -82,3 +82,24 @@ func TestEmptyOutlineShowsBothSectionsAndAddPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestOutlineSeparatesProjectTitleFromPendingSection(t *testing.T) {
+	a := &app{}
+	rows := a.mainPaneRows(8, 50, time.Now())
+	if got := strings.TrimSpace(stripANSI(rows[1])); got != "" {
+		t.Fatalf("row after project title = %q, want blank", got)
+	}
+	if got := stripANSI(rows[2]); !strings.Contains(got, "PENDING (0)") {
+		t.Fatalf("next row = %q, want pending section", got)
+	}
+}
+
+func TestUnicodeStrikePreservesTerminalWidth(t *testing.T) {
+	got := unicodeStrike("done task  ")
+	if got != "d̶o̶n̶e̶ t̶a̶s̶k̶  " {
+		t.Fatalf("unicodeStrike() = %q", got)
+	}
+	if strings.Count(got, "\u0336") != 8 {
+		t.Fatalf("unicodeStrike() added the wrong number of overlays: %q", got)
+	}
+}

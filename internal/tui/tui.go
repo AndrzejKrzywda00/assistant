@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AndrzejKrzywda00/assistant/internal/auth"
 	"github.com/AndrzejKrzywda00/assistant/internal/store"
@@ -774,7 +775,11 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 	result := make([]string, height)
 	result[0] = padBetween(a.activeProject().Name, fmt.Sprintf("%d open", open), width)
 	doneCount := len(a.tasks) - open
-	items := []paneRow{{text: fmt.Sprintf("· PENDING (%d) ·", open), taskIndex: -1, pendingHeader: true}}
+	// Keep the project heading visually separate from the task status sections.
+	items := []paneRow{
+		{taskIndex: -1},
+		{text: fmt.Sprintf("· PENDING (%d) ·", open), taskIndex: -1, pendingHeader: true},
+	}
 	selectedItem := 0
 	for i, task := range a.tasks {
 		if task.Done {
@@ -821,7 +826,11 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 			continue
 		}
 		item := items[index]
-		cell := fitCell(item.text, width)
+		plainCell := fitCell(item.text, width)
+		if item.done && needsStrikeFallback() {
+			plainCell = unicodeStrike(plainCell)
+		}
+		cell := plainCell
 		if item.pendingHeader {
 			cell = "\x1b[38;5;48m" + cell + resetBG
 		}
@@ -839,11 +848,28 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 			if item.done {
 				style += "\x1b[9;38;5;244m"
 			}
-			cell = style + fitCell(item.text, width) + resetBG
+			cell = style + plainCell + resetBG
 		}
 		result[row] = cell
 	}
 	return result
+}
+
+func needsStrikeFallback() bool {
+	return os.Getenv("TERM_PROGRAM") == "Apple_Terminal"
+}
+
+// unicodeStrike uses the combining long-stroke overlay for terminals that do
+// not render SGR 9. Combining marks occupy no cells, so the frame stays aligned.
+func unicodeStrike(value string) string {
+	var result strings.Builder
+	for _, r := range value {
+		result.WriteRune(r)
+		if !unicode.IsSpace(r) {
+			result.WriteRune('\u0336')
+		}
+	}
+	return result.String()
 }
 
 func (a *app) sidebarPaneRows(height, width int) []string {
