@@ -14,16 +14,18 @@ import (
 )
 
 type Task struct {
-	ID              int        `json:"id"`
-	ProjectID       int        `json:"project_id"`
-	Title           string     `json:"title"`
-	Done            bool       `json:"done"`
-	CreatedAt       time.Time  `json:"created_at"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	WorkStartedAt   *time.Time `json:"work_started_at,omitempty"`
-	CapturedSeconds int64      `json:"captured_seconds,omitempty"`
-	Progress        int        `json:"progress"`
-	State           string     `json:"state"`
+	ID              int               `json:"id"`
+	ProjectID       int               `json:"project_id"`
+	Title           string            `json:"title"`
+	Done            bool              `json:"done"`
+	CreatedAt       time.Time         `json:"created_at"`
+	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
+	WorkStartedAt   *time.Time        `json:"work_started_at,omitempty"`
+	CapturedSeconds int64             `json:"captured_seconds,omitempty"`
+	Progress        int               `json:"progress"`
+	State           string            `json:"state"`
+	Priority        string            `json:"priority"`
+	Content         map[string]string `json:"content,omitempty"`
 }
 
 type Project struct {
@@ -79,6 +81,9 @@ func (s *Store) List(includeDone bool) ([]Task, error) {
 	sort.SliceStable(result, func(i, j int) bool {
 		if result[i].Done != result[j].Done {
 			return !result[i].Done
+		}
+		if priorityRank(result[i].Priority) != priorityRank(result[j].Priority) {
+			return priorityRank(result[i].Priority) < priorityRank(result[j].Priority)
 		}
 		return result[i].ID < result[j].ID
 	})
@@ -142,7 +147,7 @@ func (s *Store) AddToProject(title string, projectID int) (Task, error) {
 		if !found {
 			return fmt.Errorf("project #%d not found", projectID)
 		}
-		t = Task{ID: d.NextID, ProjectID: projectID, Title: title, State: "today", CreatedAt: time.Now().UTC()}
+		t = Task{ID: d.NextID, ProjectID: projectID, Title: title, State: "today", Priority: "P1", CreatedAt: time.Now().UTC()}
 		d.NextID++
 		d.Tasks = append(d.Tasks, t)
 		return s.save(d)
@@ -223,6 +228,26 @@ func (s *Store) SetProgress(id, progress int) error {
 	})
 }
 
+func (s *Store) SetPriority(id int, priority string) error {
+	priority = strings.ToUpper(strings.TrimSpace(priority))
+	if priority != "P0" && priority != "P1" && priority != "P2" {
+		return errors.New("priority must be P0, P1, or P2")
+	}
+	return s.withLock(func() error {
+		d, err := s.load()
+		if err != nil {
+			return err
+		}
+		for i := range d.Tasks {
+			if d.Tasks[i].ID == id {
+				d.Tasks[i].Priority = priority
+				return s.save(d)
+			}
+		}
+		return fmt.Errorf("task #%d not found", id)
+	})
+}
+
 func (s *Store) Rename(id int, title string) error {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -238,6 +263,53 @@ func (s *Store) Rename(id int, title string) error {
 				d.Tasks[i].Title = title
 				return s.save(d)
 			}
+		}
+		return fmt.Errorf("task #%d not found", id)
+	})
+}
+
+func (s *Store) SetTaskContent(id int, key, value string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("content key cannot be empty")
+	}
+	return s.withLock(func() error {
+		d, err := s.load()
+		if err != nil {
+			return err
+		}
+		for i := range d.Tasks {
+			if d.Tasks[i].ID == id {
+				if d.Tasks[i].Content == nil {
+					d.Tasks[i].Content = make(map[string]string)
+				}
+				d.Tasks[i].Content[key] = value
+				return s.save(d)
+			}
+		}
+		return fmt.Errorf("task #%d not found", id)
+	})
+}
+
+func (s *Store) DeleteTaskContent(id int, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("content key cannot be empty")
+	}
+	return s.withLock(func() error {
+		d, err := s.load()
+		if err != nil {
+			return err
+		}
+		for i := range d.Tasks {
+			if d.Tasks[i].ID != id {
+				continue
+			}
+			if _, ok := d.Tasks[i].Content[key]; !ok {
+				return fmt.Errorf("content key %q not found", key)
+			}
+			delete(d.Tasks[i].Content, key)
+			return s.save(d)
 		}
 		return fmt.Errorf("task #%d not found", id)
 	})
@@ -398,6 +470,9 @@ func (s *Store) load() (data, error) {
 		if d.Tasks[i].State == "" {
 			d.Tasks[i].State = "today"
 		}
+		if priorityRank(d.Tasks[i].Priority) < 0 {
+			d.Tasks[i].Priority = "P1"
+		}
 	}
 	if d.NextID < 1 {
 		d.NextID = 1
@@ -408,6 +483,19 @@ func (s *Store) load() (data, error) {
 		}
 	}
 	return d, nil
+}
+
+func priorityRank(priority string) int {
+	switch strings.ToUpper(priority) {
+	case "P0":
+		return 0
+	case "P1":
+		return 1
+	case "P2":
+		return 2
+	default:
+		return -1
+	}
 }
 
 func defaultData() data {

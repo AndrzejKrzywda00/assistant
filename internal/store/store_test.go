@@ -58,6 +58,92 @@ func TestTaskLifecycle(t *testing.T) {
 	}
 }
 
+func TestTaskContentLifecycle(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "tasks.json"))
+	project, err := s.AddProject("Content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.AddToProject("Document API", project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskContent(task.ID, "owner", "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskContent(task.ID, "owner", "Grace"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskContent(task.ID, "link", "https://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.List(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tasks[0].Content["owner"]; got != "Grace" {
+		t.Fatalf("owner = %q, want Grace", got)
+	}
+	if err := s.DeleteTaskContent(task.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err = s.List(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tasks[0].Content["owner"]; ok {
+		t.Fatal("deleted content key was retained")
+	}
+	if err := s.DeleteTaskContent(task.ID, "missing"); err == nil {
+		t.Fatal("deleting a missing content key succeeded")
+	}
+	if err := s.SetTaskContent(task.ID, " ", "value"); err == nil {
+		t.Fatal("empty content key was accepted")
+	}
+}
+
+func TestTasksDefaultToP1AndSortByPriority(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "tasks.json"))
+	project, err := s.AddProject("Priorities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.AddToProject("Low", project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, err := s.AddToProject("Normal", project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p0, err := s.AddToProject("Urgent", project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Priority != "P1" {
+		t.Fatalf("default priority = %q, want P1", p1.Priority)
+	}
+	if err := s.SetPriority(p2.ID, "P2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPriority(p0.ID, "p0"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.List(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{p0.ID, p1.ID, p2.ID}
+	for i := range want {
+		if tasks[i].ID != want[i] {
+			t.Fatalf("priority order = %#v, want task IDs %v", tasks, want)
+		}
+	}
+	if err := s.SetPriority(p1.ID, "P3"); err == nil {
+		t.Fatal("invalid priority was accepted")
+	}
+}
+
 func TestConcurrentAddsDoNotLoseTasks(t *testing.T) {
 	s := New(filepath.Join(t.TempDir(), "tasks.json"))
 	project, err := s.AddProject("Parallel")

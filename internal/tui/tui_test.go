@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,33 @@ func TestResponsiveCellsHaveRequestedWidth(t *testing.T) {
 		if got := len([]rune(stripANSI(responsiveFocusBar(width, 50)))); got != width {
 			t.Fatalf("focus bar width = %d, want %d", got, width)
 		}
+	}
+}
+
+func TestFocusPresentsTaskContentInKeyOrder(t *testing.T) {
+	task := store.Task{
+		ID:      1,
+		Title:   "Document API",
+		Content: map[string]string{"owner": "Ada", "link": "https://example.com"},
+	}
+	a := &app{tasks: []store.Task{task}, focusTaskID: task.ID}
+	plain := stripANSI(strings.Join(a.responsiveFocusRows(20, 60, time.Now()), "\n"))
+	link := strings.Index(plain, "link: https://example.com")
+	owner := strings.Index(plain, "owner: Ada")
+	if link < 0 || owner < 0 {
+		t.Fatalf("focus content missing:\n%s", plain)
+	}
+	if link > owner {
+		t.Fatalf("focus content is not sorted by key:\n%s", plain)
+	}
+}
+
+func TestFocusPresentsTaskPriority(t *testing.T) {
+	task := store.Task{ID: 1, Title: "Urgent work", Priority: "P0"}
+	a := &app{tasks: []store.Task{task}, focusTaskID: task.ID}
+	plain := stripANSI(strings.Join(a.responsiveFocusRows(20, 60, time.Now()), "\n"))
+	if !strings.Contains(plain, "PRIORITY  P0") {
+		t.Fatalf("focus priority missing:\n%s", plain)
 	}
 }
 
@@ -112,10 +140,10 @@ func TestOutlineSeparatesProjectTitleFromPendingSection(t *testing.T) {
 
 func TestUnicodeStrikePreservesTerminalWidth(t *testing.T) {
 	got := unicodeStrike("done task  ")
-	if got != "d̶o̶n̶e̶ t̶a̶s̶k̶  " {
+	if got != "d̶o̶n̶e̶ ̶t̶a̶s̶k̶  " {
 		t.Fatalf("unicodeStrike() = %q", got)
 	}
-	if strings.Count(got, "\u0336") != 8 {
+	if strings.Count(got, "\u0336") != 9 {
 		t.Fatalf("unicodeStrike() added the wrong number of overlays: %q", got)
 	}
 }
@@ -140,6 +168,91 @@ func TestProjectNameAlwaysWrapsInFull(t *testing.T) {
 		if !strings.Contains(unselected, word) {
 			t.Fatalf("unselected project omitted %q:\n%s", word, unselected)
 		}
+	}
+}
+
+func TestTaskTitleAlwaysWrapsInFull(t *testing.T) {
+	title := "A task title long enough to wrap across several rows"
+	a := &app{
+		projects: []store.Project{{ID: 1, Name: "Project"}},
+		tasks:    []store.Task{{ID: 1, ProjectID: 1, Title: title, State: "today"}},
+	}
+	rendered := stripANSI(strings.Join(a.mainPaneRows(20, 18, time.Now()), "\n"))
+	for _, word := range strings.Fields(title) {
+		if !strings.Contains(rendered, word) {
+			t.Fatalf("wrapped task omitted %q:\n%s", word, rendered)
+		}
+	}
+}
+
+func TestOverflowingTaskListShowsScrollbar(t *testing.T) {
+	tasks := make([]store.Task, 12)
+	for i := range tasks {
+		tasks[i] = store.Task{ID: i + 1, ProjectID: 1, Title: fmt.Sprintf("Task %d", i+1), State: "today"}
+	}
+	a := &app{
+		projects: []store.Project{{ID: 1, Name: "Project"}},
+		tasks:    tasks,
+		current:  len(tasks) - 1,
+	}
+	rows := a.mainPaneRows(7, 24, time.Now())
+	if a.taskScroll == 0 {
+		t.Fatal("selecting the last task did not scroll the viewport")
+	}
+	thumbs := 0
+	for _, row := range rows[1:] {
+		plain := []rune(stripANSI(row))
+		if len(plain) != 24 {
+			t.Fatalf("scrollbar row width = %d, want 24: %q", len(plain), string(plain))
+		}
+		if plain[len(plain)-1] == '┃' {
+			thumbs++
+		} else if plain[len(plain)-1] != '│' {
+			t.Fatalf("rightmost cell = %q, want scrollbar", plain[len(plain)-1])
+		}
+	}
+	if thumbs == 0 {
+		t.Fatal("scrollbar thumb is missing")
+	}
+}
+
+func TestShortTaskListDoesNotShowScrollbar(t *testing.T) {
+	a := &app{
+		projects: []store.Project{{ID: 1, Name: "Project"}},
+		tasks:    []store.Task{{ID: 1, ProjectID: 1, Title: "Task", State: "today"}},
+	}
+	rows := a.mainPaneRows(10, 24, time.Now())
+	for _, row := range rows[1:] {
+		last := []rune(stripANSI(row))[23]
+		if last == '│' || last == '┃' {
+			t.Fatalf("non-overflowing list unexpectedly shows a scrollbar: %q", stripANSI(row))
+		}
+	}
+}
+
+func TestProjectsHaveVerticalSpacing(t *testing.T) {
+	a := &app{
+		projects: []store.Project{{Name: "First"}, {Name: "Second"}},
+	}
+	rows := a.sidebarPaneRows(20, 18)
+	firstRow, secondRow := -1, -1
+	for i, row := range rows {
+		plain := strings.TrimSpace(stripANSI(row))
+		if strings.HasSuffix(plain, "First") {
+			firstRow = i
+		}
+		if strings.HasSuffix(plain, "Second") {
+			secondRow = i
+		}
+	}
+	if firstRow < 0 || secondRow < 0 {
+		t.Fatalf("projects missing from sidebar:\n%s", stripANSI(strings.Join(rows, "\n")))
+	}
+	if secondRow != firstRow+2 {
+		t.Fatalf("project rows = %d and %d, want one blank row between them", firstRow, secondRow)
+	}
+	if got := strings.TrimSpace(stripANSI(rows[firstRow+1])); got != "" {
+		t.Fatalf("row between projects = %q, want blank", got)
 	}
 }
 
@@ -195,6 +308,7 @@ func TestBrowsingProjectsDoesNotActivateUntilSelection(t *testing.T) {
 		projects: []store.Project{{Name: "First"}, {Name: "Second"}},
 		project:  0,
 		sidebar:  3,
+		space:    2,
 	}
 	a.moveSidebar(1)
 	if a.sidebar != 4 || a.project != 0 {
@@ -204,6 +318,9 @@ func TestBrowsingProjectsDoesNotActivateUntilSelection(t *testing.T) {
 	a.activateSidebarSelection()
 	if a.project != 1 {
 		t.Fatalf("selecting did not activate project: %d", a.project)
+	}
+	if a.space != 0 {
+		t.Fatalf("selecting project opened space %d, want Today", a.space)
 	}
 	if !a.projectFocus {
 		t.Fatal("selecting a project left the Projects sidebar")

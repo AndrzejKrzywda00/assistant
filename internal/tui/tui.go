@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -378,6 +379,9 @@ func (a *app) loop() error {
 			}
 		case "a":
 			if a.focusTaskID != 0 {
+				if err := a.promptTaskContent(); err != nil {
+					return err
+				}
 				break
 			}
 			if a.projectFocus {
@@ -420,6 +424,12 @@ func (a *app) loop() error {
 			if err := a.promptNewProject(); err != nil {
 				return err
 			}
+		case "P":
+			if a.focusTaskID != 0 {
+				if err := a.promptPriority(); err != nil {
+					return err
+				}
+			}
 		case " ":
 			if a.focusTaskID != 0 {
 				break
@@ -456,6 +466,9 @@ func (a *app) loop() error {
 			}
 		case "d":
 			if a.focusTaskID != 0 {
+				if err := a.promptDeleteTaskContent(); err != nil {
+					return err
+				}
 				break
 			}
 			if a.projectFocus {
@@ -555,7 +568,9 @@ func (a *app) stopFocus() {
 	if a.focusTaskID == 0 {
 		return
 	}
+	focusedID := a.focusTaskID
 	a.focusTaskID = 0
+	a.selectTask(focusedID)
 }
 
 func (a *app) focusAvailable() bool {
@@ -582,6 +597,104 @@ func (a *app) promptProgress() error {
 	if err := a.store.SetProgress(task.ID, progress); err != nil {
 		a.status = err.Error()
 	}
+	return nil
+}
+
+func (a *app) promptPriority() error {
+	task, ok := a.focusTask()
+	if !ok {
+		return nil
+	}
+	priorities := []string{"P0", "P1", "P2"}
+	selected := 1
+	for i, priority := range priorities {
+		if taskPriority(task) == priority {
+			selected = i
+			break
+		}
+	}
+	for {
+		a.draw()
+		var slider strings.Builder
+		slider.WriteString("Priority  ")
+		for i, priority := range priorities {
+			if i > 0 {
+				slider.WriteString(" ─── ")
+			}
+			if i == selected {
+				slider.WriteString("\x1b[38;5;48m● " + priority + resetBG)
+			} else {
+				slider.WriteString("○ " + priority)
+			}
+		}
+		slider.WriteString("  ·  ←/→ choose · Enter save · Esc cancel")
+		fmt.Fprintf(a.out, "%s\x1b[K", slider.String())
+		result := <-a.keys
+		if result.err != nil {
+			return result.err
+		}
+		switch result.key {
+		case "left", "up":
+			selected = maxInt(0, selected-1)
+		case "right", "down":
+			selected = minInt(len(priorities)-1, selected+1)
+		case "0", "1", "2":
+			selected = int(result.key[0] - '0')
+		case "enter":
+			a.setResult(a.store.SetPriority(task.ID, priorities[selected]), "Priority set to "+priorities[selected])
+			return nil
+		case "escape", "ctrl-c":
+			return nil
+		}
+	}
+}
+
+func taskPriority(task store.Task) string {
+	if task.Priority == "P0" || task.Priority == "P2" {
+		return task.Priority
+	}
+	return "P1"
+}
+
+func (a *app) promptTaskContent() error {
+	task, ok := a.focusTask()
+	if !ok {
+		return nil
+	}
+	key, cancelled, err := a.prompt("Content key: ")
+	if err != nil || cancelled {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		a.status = "Content key cannot be empty"
+		return nil
+	}
+	value, cancelled, err := a.promptWithValue("Content value: ", task.Content[key])
+	if err != nil || cancelled {
+		return err
+	}
+	a.setResult(a.store.SetTaskContent(task.ID, key, value), "Task content saved")
+	return nil
+}
+
+func (a *app) promptDeleteTaskContent() error {
+	task, ok := a.focusTask()
+	if !ok {
+		return nil
+	}
+	if len(task.Content) == 0 {
+		a.status = "Task has no content keys"
+		return nil
+	}
+	key, cancelled, err := a.prompt("Delete content key: ")
+	if err != nil || cancelled {
+		return err
+	}
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	a.setResult(a.store.DeleteTaskContent(task.ID, key), "Task content deleted")
 	return nil
 }
 
@@ -667,9 +780,12 @@ func (a *app) applySidebarSelection() {
 func (a *app) activateSidebarSelection() {
 	a.applySidebarSelection()
 	// Selecting a project keeps the cursor in the Projects list so another
-	// project can immediately be chosen with the arrow keys. Spaces open tasks.
+	// project can immediately be chosen with the arrow keys. Newly selected
+	// projects always open on Today; spaces open tasks.
 	if a.sidebar < 3 {
 		a.projectFocus = false
+	} else {
+		a.space = 0
 	}
 }
 
@@ -839,19 +955,31 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 	}
 	result := make([]string, height)
 	result[0] = padBetween(a.activeProject().Name, fmt.Sprintf("%d open", open), width)
+	contentWidth := maxInt(1, width-1)
 	doneCount := len(a.tasks) - open
 	// Keep the project heading visually separate from the task status sections.
 	items := []paneRow{{taskIndex: -1}}
 	selectedItem := 0
+	appendTask := func(task store.Task, taskIndex int, done bool) {
+		prefix := fmt.Sprintf("▸ %s  ", progressGlyph(task.Progress))
+		lines := wrapText(task.Title, maxInt(1, contentWidth-len([]rune(prefix))))
+		for lineIndex, line := range lines {
+			text := strings.Repeat(" ", len([]rune(prefix))) + line
+			if lineIndex == 0 {
+				text = prefix + line
+			}
+			item := paneRow{text: text, taskIndex: taskIndex, done: done, selected: taskIndex == a.current}
+			if item.selected && lineIndex == 0 {
+				selectedItem = len(items)
+			}
+			items = append(items, item)
+		}
+	}
 	if a.space != 0 {
 		spaceName := []string{"TODAY", "BLOCKED", "WAITING"}[a.space]
 		items = append(items, paneRow{text: fmt.Sprintf("· %s (%d) ·", spaceName, len(a.tasks)), taskIndex: -1, pendingHeader: true})
 		for i, task := range a.tasks {
-			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: task.Done, selected: i == a.current}
-			if item.selected {
-				selectedItem = len(items)
-			}
-			items = append(items, item)
+			appendTask(task, i, task.Done)
 		}
 		if len(a.tasks) == 0 {
 			items = append(items, paneRow{text: "No " + strings.ToLower(spaceName) + " tasks", taskIndex: -1, emptyPrompt: true})
@@ -862,11 +990,7 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 			if task.Done {
 				continue
 			}
-			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: task.Done, selected: i == a.current}
-			if item.selected {
-				selectedItem = len(items)
-			}
-			items = append(items, item)
+			appendTask(task, i, task.Done)
 		}
 		if open == 0 {
 			items = append(items, paneRow{text: "No pending tasks · press a to add one", taskIndex: -1, emptyPrompt: true})
@@ -876,11 +1000,7 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 			if !task.Done {
 				continue
 			}
-			item := paneRow{text: fmt.Sprintf("▸ %s  %s", progressGlyph(task.Progress), task.Title), taskIndex: i, done: true, selected: i == a.current}
-			if item.selected {
-				selectedItem = len(items)
-			}
-			items = append(items, item)
+			appendTask(task, i, true)
 		}
 		if doneCount == 0 {
 			items = append(items, paneRow{text: "No completed tasks yet", taskIndex: -1, emptyPrompt: true})
@@ -897,14 +1017,28 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 	if a.taskScroll > maxScroll {
 		a.taskScroll = maxScroll
 	}
+	overflow := len(items) > visible
+	thumbStart, thumbSize := 0, 0
+	if overflow && visible > 0 {
+		thumbSize = maxInt(1, visible*visible/len(items))
+		thumbSize = minInt(visible, thumbSize)
+		if maxScroll > 0 {
+			thumbStart = a.taskScroll * (visible - thumbSize) / maxScroll
+		}
+	}
 	for row := 1; row < height; row++ {
 		index := a.taskScroll + row - 1
 		if index >= len(items) {
-			result[row] = strings.Repeat(" ", width)
+			result[row] = strings.Repeat(" ", contentWidth)
+			if overflow {
+				result[row] += "\x1b[2;38;5;240m│" + resetBG
+			} else {
+				result[row] += " "
+			}
 			continue
 		}
 		item := items[index]
-		plainCell := fitCell(item.text, width)
+		plainCell := fitCell(item.text, contentWidth)
 		if item.done && needsStrikeFallback() {
 			plainCell = unicodeStrike(plainCell)
 		}
@@ -928,6 +1062,16 @@ func (a *app) mainPaneRows(height, width int, now time.Time) []string {
 			}
 			cell = style + plainCell + resetBG
 		}
+		if overflow {
+			viewportRow := row - 1
+			if viewportRow >= thumbStart && viewportRow < thumbStart+thumbSize {
+				cell += "\x1b[38;5;48m┃" + resetBG
+			} else {
+				cell += "\x1b[2;38;5;240m│" + resetBG
+			}
+		} else {
+			cell += " "
+		}
 		result[row] = cell
 	}
 	return result
@@ -938,15 +1082,17 @@ func needsStrikeFallback() bool {
 }
 
 // unicodeStrike uses the combining long-stroke overlay for terminals that do
-// not render SGR 9. Combining marks occupy no cells, so the frame stays aligned.
+// not render SGR 9. Internal spaces receive the overlay so the line remains
+// continuous between words, while trailing cell padding stays untouched.
 func unicodeStrike(value string) string {
+	content := strings.TrimRightFunc(value, unicode.IsSpace)
+	padding := value[len(content):]
 	var result strings.Builder
-	for _, r := range value {
+	for _, r := range content {
 		result.WriteRune(r)
-		if !unicode.IsSpace(r) {
-			result.WriteRune('\u0336')
-		}
+		result.WriteRune('\u0336')
 	}
+	result.WriteString(padding)
 	return result.String()
 }
 
@@ -966,6 +1112,9 @@ func (a *app) sidebarPaneRows(height, width int) []string {
 	}
 	items = append(items, sideItem{"", -1}, sideItem{"PROJECTS", -1}, sideItem{"", -1})
 	for i, project := range a.projects {
+		if i > 0 {
+			items = append(items, sideItem{"", -1})
+		}
 		cursor := i + 3
 		nameWidth := maxInt(1, width-4)
 		lines := wrapText(project.Name, nameWidth)
@@ -1076,11 +1225,31 @@ func (a *app) responsiveFocusRows(height, width int, now time.Time) []string {
 	}
 	set(0, padCenter("F O C U S", width))
 	set(2, padCenter(task.Title, width))
-	set(4, padCenter("STARTED  "+task.CreatedAt.Local().Format("02 Jan · 15:04"), width))
-	barRow := minInt(6, height-3)
-	result[barRow] = responsiveFocusBar(width, task.Progress)
+	set(4, padCenter("STARTED  "+task.CreatedAt.Local().Format("02 Jan · 15:04")+"    PRIORITY  "+taskPriority(task), width))
+	barRow := maxInt(0, height-4)
+	set(6, "CONTENT")
+	keys := make([]string, 0, len(task.Content))
+	for key := range task.Content {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	contentRows := maxInt(0, barRow-8)
+	if len(keys) == 0 && contentRows > 0 {
+		set(7, "  No content · press a to add a key")
+	} else if contentRows > 0 {
+		for i, key := range keys {
+			if i >= contentRows {
+				set(7+contentRows-1, fmt.Sprintf("  … %d more", len(keys)-contentRows+1))
+				break
+			}
+			set(7+i, fmt.Sprintf("  %s: %s", sanitize(key), sanitize(task.Content[key])))
+		}
+	}
+	if barRow < height {
+		result[barRow] = responsiveFocusBar(width, task.Progress)
+	}
 	set(barRow+1, padCenter("TASK PROGRESS", width))
-	set(height-2, padCenter("p set progress · Esc outline", width))
+	set(height-2, padCenter("a content · d delete · P priority · p progress · Esc outline", width))
 	_ = now
 	for i := range result {
 		if result[i] == "" {
@@ -1114,7 +1283,10 @@ func (a *app) footerForWidth(width int) string {
 		return "\x1b[33mh/←" + resetBG + " sidebar  \x1b[33ml/→" + resetBG + " tasks  \x1b[33m↑/↓" + resetBG + " select  \x1b[31md" + resetBG + " delete  \x1b[33mq" + resetBG + " quit"
 	}
 	if a.focusTaskID != 0 {
-		return "\x1b[33mp" + resetBG + " progress  \x1b[33mesc" + resetBG + " outline  \x1b[33mq" + resetBG + " quit"
+		if width < 80 {
+			return "\x1b[33ma" + resetBG + " +  \x1b[31md" + resetBG + " −  \x1b[33mP" + resetBG + " pri  \x1b[33mp" + resetBG + " %  \x1b[33mesc" + resetBG + "  \x1b[33mq" + resetBG
+		}
+		return "\x1b[33ma" + resetBG + " content  \x1b[31md" + resetBG + " delete key  \x1b[33mP" + resetBG + " priority  \x1b[33mp" + resetBG + " progress  \x1b[33mesc" + resetBG + " outline  \x1b[33mq" + resetBG + " quit"
 	}
 	if width < 80 {
 		return "\x1b[33mh/l" + resetBG + " panes  \x1b[33m↑/↓" + resetBG + " select  \x1b[33m?" + resetBG + " help  \x1b[33mq" + resetBG + " quit"

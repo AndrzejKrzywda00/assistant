@@ -55,6 +55,9 @@ Ensure `$(go env GOPATH)/bin` is on `PATH`, then run `assistant`.
 | `space` | Complete or reopen the selected task; it stays visible |
 | `enter` | Edit the selected task |
 | `f` | In a Space, replace the task pane with the selected task's Focus tab |
+| `a` in Focus | Add a content key, or edit an existing key's value |
+| `d` in Focus | Delete a content key by name |
+| `P` in Focus | Choose task priority (`P0`–`P2`) with the slider |
 | `p` in Focus | Set explicit task progress from 0–100% |
 | `escape` in Focus | Return to Outline |
 
